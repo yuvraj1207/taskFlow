@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TaskFlow</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="container">
+    <h1>TaskFlow</h1>
+
+    <div class="card">
+        <h2>Create a task</h2>
+        <form id="task-form">
+            <label for="title">Title *</label>
+            <input type="text" id="title" required>
+
+            <label for="description">Description</label>
+            <textarea id="description" rows="2"></textarea>
+
+            <div class="row">
+                <div>
+                    <label for="priority">Priority</label>
+                    <select id="priority">
+                        <option value="LOW">Low</option>
+                        <option value="MEDIUM" selected>Medium</option>
+                        <option value="HIGH">High</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="status">Status</label>
+                    <select id="status">
+                        <option value="PENDING" selected>Pending</option>
+                        <option value="IN_PROGRESS">In progress</option>
+                        <option value="COMPLETED">Completed</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="dueDate">Due date</label>
+                    <input type="date" id="dueDate">
+                </div>
+            </div>
+
+            <button type="submit">Add task</button>
+        </form>
+        <p id="message" class="message"></p>
+    </div>
+
+    <div class="card">
+        <div class="list-header">
+            <h2>Your tasks</h2>
+            <button id="refresh" class="secondary">Refresh</button>
+        </div>
+        <table>
+            <thead>
+            <tr>
+                <th>Title</th>
+                <th>Priority</th>
+                <th>Status</th>
+                <th>Due</th>
+                <th>Actions</th>
+            </tr>
+            </thead>
+            <tbody id="task-list"></tbody>
+        </table>
+        <p id="empty" class="empty" hidden>No tasks yet.</p>
+    </div>
+</div>
+
+<script>
+    const API = "/api/tasks";
+    const form = document.getElementById("task-form");
+    const message = document.getElementById("message");
+    const list = document.getElementById("task-list");
+    const empty = document.getElementById("empty");
+
+    function showMessage(text, isError = false) {
+        message.textContent = text;
+        message.className = "message " + (isError ? "error" : "success");
+    }
+
+    // Reads the ApiError JSON from the server and returns a readable message
+    async function readError(response) {
+        try {
+            const body = await response.json();
+            if (body.details && body.details.length > 0) {
+                return body.message + ": " + body.details.join("; ");
+            }
+            return body.message || "Request failed with status " + response.status;
+        } catch (err) {
+            return "Request failed with status " + response.status;
+        }
+    }
+
+    async function loadTasks() {
+        try {
+            const response = await fetch(API);
+            if (!response.ok) throw new Error(await readError(response));
+            const tasks = await response.json();
+            renderTasks(tasks);
+        } catch (err) {
+            showMessage("Could not load tasks: " + err.message, true);
+        }
+    }
+
+    function renderTasks(tasks) {
+        list.innerHTML = "";
+        empty.hidden = tasks.length > 0;
+
+        tasks.forEach(task => {
+            const row = document.createElement("tr");
+            row.innerHTML = `
+                    <td>${escapeHtml(task.title)}<br><small>${escapeHtml(task.description || "")}</small></td>
+                    <td><span class="badge ${task.priority.toLowerCase()}">${task.priority}</span></td>
+                    <td>${task.status.replace("_", " ")}</td>
+                    <td>${task.dueDate || "-"}</td>
+                    <td class="actions"></td>
+                `;
+
+            const actions = row.querySelector(".actions");
+
+            if (task.status !== "COMPLETED") {
+                const doneBtn = document.createElement("button");
+                doneBtn.textContent = "Complete";
+                doneBtn.className = "small";
+                doneBtn.onclick = () => completeTask(task);
+                actions.appendChild(doneBtn);
+            }
+
+            const deleteBtn = document.createElement("button");
+            deleteBtn.textContent = "Delete";
+            deleteBtn.className = "small danger";
+            deleteBtn.onclick = () => deleteTask(task.id);
+            actions.appendChild(deleteBtn);
+
+            list.appendChild(row);
+        });
+    }
+
+    form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const task = {
+            title: document.getElementById("title").value.trim(),
+            description: document.getElementById("description").value.trim(),
+            priority: document.getElementById("priority").value,
+            status: document.getElementById("status").value,
+            dueDate: document.getElementById("dueDate").value || null
+        };
+
+        try {
+            const response = await fetch(API, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(task)
+            });
+            if (!response.ok) throw new Error(await readError(response));
+
+            form.reset();
+            document.getElementById("priority").value = "MEDIUM";
+            showMessage("Task created.");
+            loadTasks();
+        } catch (err) {
+            showMessage("Could not create task: " + err.message, true);
+        }
+    });
+
+    async function completeTask(task) {
+        const updated = { ...task, status: "COMPLETED" };
+        try {
+            const response = await fetch(`${API}/${task.id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(updated)
+            });
+            if (!response.ok) throw new Error(await readError(response));
+            showMessage("Task marked as completed.");
+            loadTasks();
+        } catch (err) {
+            showMessage("Could not update task: " + err.message, true);
+        }
+    }
+
+    async function deleteTask(id) {
+        if (!confirm("Delete this task?")) return;
+        try {
+            const response = await fetch(`${API}/${id}`, { method: "DELETE" });
+            if (!response.ok) throw new Error(await readError(response));
+            showMessage("Task deleted.");
+            loadTasks();
+        } catch (err) {
+            showMessage("Could not delete task: " + err.message, true);
+        }
+    }
+
+    // Prevents task text from being interpreted as HTML
+    function escapeHtml(text) {
+        const div = document.createElement("div");
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    document.getElementById("refresh").addEventListener("click", loadTasks);
+    loadTasks();
+</script>
+</body>
+</html>
